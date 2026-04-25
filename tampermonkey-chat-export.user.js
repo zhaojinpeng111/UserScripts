@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Chat Export Sidebar (ChatGPT/Gemini/千问)
+// @name         Chat Export Sidebar (ChatGPT/Gemini/千问/DeepSeek/Kimi)
 // @namespace    https://local.cursor/
 // @version      0.1.0
 // @description  侧边栏目录定位 + 导出对话 Markdown（复制/下载），参考 ExportGPT
@@ -13,6 +13,10 @@
 // @match        https://qianwen.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://*.qwen.ai/*
+// @match        https://chat.deepseek.com/*
+// @match        https://www.kimi.com/*
+// @match        https://kimi.com/*
+// @match        https://kimi.moonshot.cn/*
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
 // @grant        GM_download
@@ -517,6 +521,7 @@
       el.id,
       el.className,
       el.getAttribute('data-role'),
+      el.getAttribute('data-cexport-role'),
       el.getAttribute('data-message-role'),
       el.getAttribute('data-testid'),
       el.getAttribute('data-test-id'),
@@ -528,8 +533,228 @@
       .toLowerCase();
 
     if (/(user|human|query|question|prompt|you|me|mine|用户|提问|问题|我:|我\b)/i.test(attrs)) return 'user';
-    if (/(assistant|model|bot|answer|response|markdown|ai|gemini|qwen|tongyi|回答|回复|助手|通义|千问)/i.test(attrs)) return 'assistant';
+    if (/(assistant|model|bot|answer|response|markdown|ai|gemini|qwen|tongyi|deepseek|kimi|moonshot|回答|回复|助手|通义|千问)/i.test(attrs)) return 'assistant';
     return 'unknown';
+  }
+
+  /** @param {Element} el */
+  function isLikelyChatContentElement(el) {
+    if (el.closest('aside, nav, header, footer')) return false;
+    const text = normalizeText(el.textContent || '');
+    if (!text || text.length > 30000) return false;
+    const interactiveCount = el.querySelectorAll('button, a, input, textarea, select').length;
+    const textBlockCount = el.querySelectorAll('p, pre, code, li, blockquote, h1, h2, h3, h4, h5, h6').length;
+    return interactiveCount < 8 || textBlockCount > 0;
+  }
+
+  /** @param {Element} el */
+  function isVisibleContentElement(el) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 20 || rect.height < 8) return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0;
+  }
+
+  /** @param {Element} el */
+  function isAssistantLikeElement(el) {
+    const hint = [
+      el.className,
+      el.id,
+      el.getAttribute('data-role'),
+      el.getAttribute('data-testid'),
+      el.getAttribute('data-test-id'),
+      el.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /(assistant|bot|model|answer|response|markdown|prose|deepseek|kimi|ai|回答|回复|助手)/i.test(hint);
+  }
+
+  /**
+   * DeepSeek/Kimi 常把回答标成 markdown，但用户问题只有哈希 class。
+   * 这个兜底用回答块反推其前一个文本块作为问题。
+   * @param {ParentNode} root
+   */
+  function collectMarkdownAnchoredTurns(root) {
+    const answerBlocks = preferLeafMessageElements(collectCandidateElements([
+      '[class*="markdown" i]',
+      '[class*="prose" i]',
+      '[class*="answer" i]',
+      '[class*="response" i]',
+      '[data-testid*="answer" i]',
+      '[data-test-id*="answer" i]',
+    ], root).filter((el) => isLikelyChatContentElement(el) && isVisibleContentElement(el)));
+
+    if (!answerBlocks.length) return [];
+
+    const questionBlocks = preferLeafMessageElements(Array.from(root.querySelectorAll('div[class], p, section[class], article[class], [role="article"], [data-testid], [data-test-id]')).filter((el) => {
+      if (isScriptUiElement(el)) return false;
+      if (!isLikelyChatContentElement(el) || !isVisibleContentElement(el)) return false;
+      const text = normalizeText(el.textContent || '');
+      if (!text || text.length > 5000) return false;
+      if (el.closest('[class*="markdown" i], [class*="prose" i]')) return false;
+      if (isAssistantLikeElement(el)) return false;
+      return true;
+    }));
+
+    const out = [];
+    const usedQuestions = new Set();
+    const usedAnswers = new Set();
+    const rectCache = new Map();
+    /** @param {Element} el */
+    const getRect = (el) => {
+      if (!rectCache.has(el)) rectCache.set(el, el.getBoundingClientRect());
+      return rectCache.get(el);
+    };
+
+    for (const answer of answerBlocks) {
+      if (usedAnswers.has(answer)) continue;
+      const answerRect = getRect(answer);
+      const question = questionBlocks
+        .filter((candidate) => {
+          if (usedQuestions.has(candidate)) return false;
+          if (candidate === answer || candidate.contains(answer) || answer.contains(candidate)) return false;
+          if (!(candidate.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+          const rect = getRect(candidate);
+          return rect.bottom <= answerRect.top + 8;
+        })
+        .sort((a, b) => getRect(b).bottom - getRect(a).bottom)[0];
+
+      if (!question) continue;
+      question.setAttribute('data-cexport-role', 'user');
+      answer.setAttribute('data-cexport-role', 'assistant');
+      usedQuestions.add(question);
+      usedAnswers.add(answer);
+      out.push(question, answer);
+    }
+
+    return out.sort((a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      return pos & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : pos & Node.DOCUMENT_POSITION_PRECEDING ? 1 : 0;
+    });
+  }
+
+  /** @param {Element} el */
+  function isDeepSeekUserMessage(el) {
+    const hint = [
+      el.className,
+      el.id,
+      el.getAttribute('data-role'),
+      el.getAttribute('data-testid'),
+      el.getAttribute('data-test-id'),
+      el.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/(assistant|bot|model|answer|response|markdown|prose|回答|回复|助手)/i.test(hint)) return false;
+    if (el.querySelector('[class*="markdown" i], [class*="prose" i], pre, code, table, ol, ul')) return false;
+    if (el.querySelector(':scope > .fbb737a4')) return true;
+    return /(^|\s)_63c77b1(\s|$)|user|human|question|query|prompt|mine|self|我|用户|提问|问题/i.test(hint);
+  }
+
+  /**
+   * @param {{
+   *   id: string,
+   *   label: string,
+   *   hostPattern: RegExp,
+   *   fallbackTitle: string,
+   *   titleStripPattern: RegExp,
+   *   assistantPattern: RegExp,
+   *   userPattern?: RegExp,
+   * }} config
+   * @returns {Adapter}
+   */
+  function makeGenericChatAdapter(config) {
+    return {
+      id: config.id,
+      label: config.label,
+      canHandle: () => config.hostPattern.test(location.hostname),
+      getTitle: () => {
+        const titleNode = document.querySelector('main h1, main [class*="conversation-title" i], main [class*="chat-title" i], main [class*="session-title" i]');
+        return ((titleNode && titleNode.textContent) || document.title || config.fallbackTitle).replace(config.titleStripPattern, '').trim() || config.fallbackTitle;
+      },
+      getConversationRoot: () => document.querySelector('main, [class*="conversation" i], [class*="chat" i], [class*="message-list" i], [class*="messages" i]') || document.body,
+      getMessageElements: () => {
+        const root = document.querySelector('main') || document.body;
+        const strictSelectors = [
+          '[data-message-role]',
+          '[data-message-author-role]',
+          '[data-role]',
+          '[data-testid*="message" i]',
+          '[data-test-id*="message" i]',
+          '[class*="user-message" i]',
+          '[class*="assistant-message" i]',
+          '[class*="bot-message" i]',
+          '[class*="ai-message" i]',
+          '[class*="message-item" i]',
+          '[class*="messageItem" i]',
+          '[class*="chat-item" i]',
+          '[class*="chatItem" i]',
+          '.message',
+          '.chat-message',
+        ];
+        const found = preferLeafMessageElements(collectCandidateElements(strictSelectors, root).filter(isLikelyChatContentElement));
+        if (found.length >= 2) return found.slice(0, 500);
+
+        if ((!location.pathname || location.pathname === '/') && !location.search && !location.hash) return [];
+
+        const markdownAnchored = collectMarkdownAnchoredTurns(root);
+        if (markdownAnchored.length >= 2) return markdownAnchored.slice(0, 500);
+
+        if ((!location.pathname || location.pathname === '/') && !location.search && !location.hash) return [];
+
+        const broadSelectors = [
+          '[class*="question" i]',
+          '[class*="answer" i]',
+          '[class*="response" i]',
+          '[class*="bubble" i]',
+          'article',
+        ];
+        const broadFound = preferLeafMessageElements(collectCandidateElements(broadSelectors, root).filter(isLikelyChatContentElement));
+        if (broadFound.length >= 2) return broadFound.slice(0, 500);
+
+        const fallback = collectCandidateElements([
+          'main article',
+          'main section',
+          'main div[class]',
+          '[class*="conversation" i] div[class]',
+          '[class*="message-list" i] div[class]',
+          '[class*="messages" i] div[class]',
+        ], root).filter((el) => {
+          if (!isLikelyChatContentElement(el)) return false;
+          const className = el.className.toString();
+          return /(message|chat|user|assistant|answer|question|response|bubble|item|content|markdown|ds-|kimi)/i.test(className);
+        });
+        return preferLeafMessageElements(fallback).slice(0, 400);
+      },
+      getRole: (el) => {
+        const r = [
+          el.getAttribute('data-cexport-role'),
+          el.getAttribute('data-message-role'),
+          el.getAttribute('data-message-author-role'),
+          el.getAttribute('data-role'),
+          el.getAttribute('data-testid'),
+          el.getAttribute('data-test-id'),
+          el.getAttribute('aria-label'),
+          el.className,
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        if ((config.userPattern || /(user|human|question|query|prompt|mine|self|我|用户|提问|问题)/i).test(r)) return 'user';
+        if (config.assistantPattern.test(r)) return 'assistant';
+        return getRoleHint(el);
+      },
+      getContentRoot: (el) => {
+        const explicitContent = el.querySelector([
+          '[class*="markdown" i]',
+          '[class*="content" i]',
+          '[class*="message-content" i]',
+          '[class*="messageContent" i]',
+          '[class*="answer" i]',
+          '[class*="response" i]',
+          'pre',
+        ].join(', '));
+        return explicitContent || el;
+      },
+      scrollToMessage: (el) => {
+        scrollToMessageStart(el);
+      },
+    };
   }
 
   // -------------------------
@@ -790,7 +1015,79 @@
     },
   };
 
-  adapters.push(chatgptAdapter, geminiAdapter, qianwenAdapter);
+  /** @type {Adapter} */
+  const deepseekAdapter = {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    canHandle: () => /(^|\.)chat\.deepseek\.com$/.test(location.hostname),
+    getTitle: () => {
+      const titleNode = document.querySelector('main h1, main [class*="conversation-title" i], main [class*="chat-title" i], main [class*="session-title" i]');
+      return ((titleNode && titleNode.textContent) || document.title || 'DeepSeek 对话').replace(/\s*[-|]\s*DeepSeek.*$/i, '').trim() || 'DeepSeek 对话';
+    },
+    getConversationRoot: () => document.querySelector('main, [data-virtual-list], [class*="conversation" i], [class*="chat" i]') || document.body,
+    getMessageElements: () => {
+      const root = deepseekAdapter.getConversationRoot() || document.body;
+      const messages = collectCandidateElements([
+        '.ds-message',
+        '[class*="ds-message" i]',
+        '[data-virtual-list-item-key] [class*="message" i]',
+      ], root).filter((el) => isLikelyChatContentElement(el) && isVisibleContentElement(el));
+      if (messages.length >= 2) return messages.slice(0, 500);
+
+      const markdownAnchored = collectMarkdownAnchoredTurns(root);
+      if (markdownAnchored.length >= 2) return markdownAnchored.slice(0, 500);
+
+      return [];
+    },
+    getRole: (el) => {
+      const forcedRole = el.getAttribute('data-cexport-role');
+      if (forcedRole === 'user') return 'user';
+      if (forcedRole === 'assistant') return 'assistant';
+
+      const hint = [
+        el.className,
+        el.id,
+        el.getAttribute('data-role'),
+        el.getAttribute('data-testid'),
+        el.getAttribute('data-test-id'),
+        el.getAttribute('aria-label'),
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      if (isDeepSeekUserMessage(el)) return 'user';
+      if (/(assistant|bot|model|answer|response|markdown|prose|回答|回复|助手)/i.test(hint)) return 'assistant';
+      if (el.querySelector('[class*="markdown" i], [class*="prose" i], pre, code, table, ol, ul')) return 'assistant';
+      if (el.matches('.ds-message, [class*="ds-message" i]')) return 'assistant';
+      return getRoleHint(el);
+    },
+    getContentRoot: (el) => {
+      const explicitContent = el.querySelector([
+        '[class*="markdown" i]',
+        '[class*="prose" i]',
+        '[class*="content" i]',
+        '[class*="message-content" i]',
+        '[class*="messageContent" i]',
+        '[class*="answer" i]',
+        '[class*="response" i]',
+        'pre',
+      ].join(', '));
+      return explicitContent || el;
+    },
+    scrollToMessage: (el) => {
+      scrollToMessageStart(el);
+    },
+  };
+
+  /** @type {Adapter} */
+  const kimiAdapter = makeGenericChatAdapter({
+    id: 'kimi',
+    label: 'Kimi',
+    hostPattern: /(^|\.)kimi\.com$|(^|\.)kimi\.moonshot\.cn$/,
+    fallbackTitle: 'Kimi 对话',
+    titleStripPattern: /\s*[-|]\s*(Kimi|Moonshot).*$/i,
+    assistantPattern: /(assistant|bot|model|answer|response|ai|kimi|moonshot|回答|回复|助手)/i,
+  });
+
+  adapters.push(chatgptAdapter, geminiAdapter, qianwenAdapter, deepseekAdapter, kimiAdapter);
 
   // -------------------------
   // UI
@@ -896,6 +1193,54 @@
       --cexport-shadow: 0 14px 34px rgba(17,17,51,0.14);
     }
 
+    #cexport-root.cexport-theme-deepseek,
+    #cexport-preview.cexport-theme-deepseek,
+    #cexport-rail-popover.cexport-theme-deepseek {
+      --cexport-bg: rgba(18, 23, 36, 0.94);
+      --cexport-fg: rgba(244, 247, 255, 0.96);
+      --cexport-muted: rgba(244, 247, 255, 0.64);
+      --cexport-border: rgba(75, 134, 255, 0.22);
+      --cexport-accent: #4d6bfe;
+      --cexport-ok: #2ec27e;
+      --cexport-shadow: 0 14px 34px rgba(8,16,34,0.40);
+    }
+
+    #cexport-root.cexport-theme-deepseek.cexport-light,
+    #cexport-preview.cexport-theme-deepseek.cexport-light,
+    #cexport-rail-popover.cexport-theme-deepseek.cexport-light {
+      --cexport-bg: rgba(255, 255, 255, 0.95);
+      --cexport-fg: rgba(19, 24, 38, 0.95);
+      --cexport-muted: rgba(19, 24, 38, 0.60);
+      --cexport-border: rgba(77, 107, 254, 0.16);
+      --cexport-accent: #4d6bfe;
+      --cexport-ok: #178d55;
+      --cexport-shadow: 0 14px 34px rgba(26,42,90,0.14);
+    }
+
+    #cexport-root.cexport-theme-kimi,
+    #cexport-preview.cexport-theme-kimi,
+    #cexport-rail-popover.cexport-theme-kimi {
+      --cexport-bg: rgba(18, 20, 34, 0.94);
+      --cexport-fg: rgba(246, 247, 255, 0.96);
+      --cexport-muted: rgba(246, 247, 255, 0.64);
+      --cexport-border: rgba(120, 115, 255, 0.22);
+      --cexport-accent: #7c6cff;
+      --cexport-ok: #31c48d;
+      --cexport-shadow: 0 14px 34px rgba(12,14,32,0.40);
+    }
+
+    #cexport-root.cexport-theme-kimi.cexport-light,
+    #cexport-preview.cexport-theme-kimi.cexport-light,
+    #cexport-rail-popover.cexport-theme-kimi.cexport-light {
+      --cexport-bg: rgba(255, 255, 255, 0.95);
+      --cexport-fg: rgba(24, 24, 45, 0.95);
+      --cexport-muted: rgba(24, 24, 45, 0.60);
+      --cexport-border: rgba(124, 108, 255, 0.16);
+      --cexport-accent: #6b5cff;
+      --cexport-ok: #0f9f6e;
+      --cexport-shadow: 0 14px 34px rgba(37,35,90,0.14);
+    }
+
     #cexport-root.cexport-dark,
     #cexport-preview.cexport-dark,
     #cexport-rail-popover.cexport-dark {
@@ -970,6 +1315,16 @@
     #cexport-root.cexport-theme-qianwen #cexport-header,
     #cexport-preview.cexport-theme-qianwen #cexport-preview-header {
       background: linear-gradient(90deg, rgba(255,138,61,0.16), rgba(63,167,255,0.10));
+    }
+
+    #cexport-root.cexport-theme-deepseek #cexport-header,
+    #cexport-preview.cexport-theme-deepseek #cexport-preview-header {
+      background: linear-gradient(90deg, rgba(77,107,254,0.16), rgba(46,194,126,0.08));
+    }
+
+    #cexport-root.cexport-theme-kimi #cexport-header,
+    #cexport-preview.cexport-theme-kimi #cexport-preview-header {
+      background: linear-gradient(90deg, rgba(124,108,255,0.16), rgba(49,196,141,0.08));
     }
 
     #cexport-root.cexport-theme-chatgpt #cexport-header,
@@ -1703,7 +2058,7 @@
   const state = loadState();
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const THEME_CLASSES = ['cexport-theme-chatgpt', 'cexport-theme-gemini', 'cexport-theme-qianwen'];
+  const THEME_CLASSES = ['cexport-theme-chatgpt', 'cexport-theme-gemini', 'cexport-theme-qianwen', 'cexport-theme-deepseek', 'cexport-theme-kimi'];
   const MODE_CLASSES = ['cexport-light', 'cexport-dark'];
 
   function detectColorMode() {
