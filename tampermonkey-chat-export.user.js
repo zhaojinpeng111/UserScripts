@@ -944,10 +944,6 @@
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--cexport-accent) 12%, transparent);
     }
 
-    #cexport-root.cexport-light .cexport-rail-item::before {
-      background: color-mix(in srgb, var(--cexport-accent) 38%, rgba(17,17,51,0.18));
-    }
-
     #cexport-root.cexport-light .cexport-rail-item:hover,
     #cexport-root.cexport-light .cexport-rail-item.active {
       background: var(--cexport-accent);
@@ -1003,15 +999,15 @@
 
     #cexport-root.cexport-collapsed {
       top: 50%;
-      right: 10px;
-      width: 36px;
-      height: auto;
-      max-height: calc(100vh - 24px);
+      right: 0;
+      width: 0;
+      height: 0;
+      max-height: 0;
       transform: translateY(-50%);
-      border-radius: 999px;
-      background: var(--cexport-bg);
-      border-color: var(--cexport-border);
-      box-shadow: var(--cexport-shadow);
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      pointer-events: none;
     }
 
     #cexport-root.cexport-collapsed::before {
@@ -1031,9 +1027,9 @@
     }
 
     #cexport-root.cexport-collapsed #cexport-rail {
-      display: flex;
+      display: none;
       flex-direction: column;
-      height: auto;
+      height: 100%;
       width: 100%;
       min-height: 0;
       overflow: hidden;
@@ -1055,16 +1051,13 @@
     }
 
     #cexport-rail-list {
-      flex: 0 1 auto;
+      flex: 1 1 auto;
       min-height: 0;
-      max-height: calc(100vh - 82px);
-      overflow: auto;
-      padding: 5px 0 8px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 14px;
-      scrollbar-width: thin;
+      height: 100%;
+      overflow: hidden;
+      margin: 4px 0 12px;
+      padding: 8px 0;
+      display: block;
       position: relative;
       overscroll-behavior: contain;
     }
@@ -1084,25 +1077,11 @@
       justify-content: center;
       cursor: pointer;
       font-family: var(--cexport-font);
-      position: relative;
-      box-shadow: 0 0 0 3px rgba(255,255,255,0.03);
-      transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-    }
-
-    .cexport-rail-item::before {
-      content: "";
       position: absolute;
       left: 50%;
-      top: calc(100% + 2px);
-      width: 1px;
-      height: 12px;
-      transform: translateX(-50%);
-      background: var(--cexport-border);
-      pointer-events: none;
-    }
-
-    .cexport-rail-item:last-child::before {
-      display: none;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.03);
+      transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
     }
 
     .cexport-rail-item:hover,
@@ -1110,16 +1089,28 @@
       border-color: rgba(122,162,255,0.55);
       background: var(--cexport-accent);
       color: #fff;
-      transform: scale(1.22);
+      transform: translate(-50%, -50%) scale(1.22);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--cexport-accent) 22%, transparent);
+    }
+
+    .cexport-rail-item.merged {
+      width: 15px;
+      height: 15px;
+      min-height: 15px;
+      opacity: 0.92;
     }
 
     #cexport-rail-popover {
       position: fixed;
       z-index: 2147483647;
       display: none;
-      max-width: 320px;
-      padding: 8px 10px;
+      top: 50%;
+      right: 10px;
+      transform: translate(calc(100% - 72px), -50%);
+      width: 280px;
+      max-width: min(320px, calc(100vw - 72px));
+      max-height: min(520px, calc(100vh - 32px));
+      padding: 10px;
       border: 1px solid var(--cexport-border);
       border-radius: 12px;
       color: var(--cexport-fg);
@@ -1127,14 +1118,132 @@
       box-shadow: var(--cexport-shadow);
       backdrop-filter: blur(10px);
       font: 12px/1.45 var(--cexport-font);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      pointer-events: none;
+      overflow: auto;
+      pointer-events: auto;
+      scrollbar-width: thin;
+      transition: transform 0.18s ease, opacity 0.18s ease;
     }
 
     #cexport-rail-popover.open {
       display: block;
+    }
+
+    #cexport-root.cexport-collapsed + #cexport-rail-popover {
+      display: block;
+    }
+
+    #cexport-root.cexport-collapsed + #cexport-rail-popover:hover,
+    #cexport-rail-popover.open,
+    #cexport-rail-popover:hover {
+      display: block;
+      transform: translate(0, -50%);
+    }
+
+    #cexport-rail-popover.cexport-force-hidden {
+      display: none !important;
+    }
+
+    .cexport-rail-popover-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: start;
+      margin-bottom: 8px;
+      padding: 2px 2px 8px;
+      border-bottom: 1px solid var(--cexport-border);
+    }
+
+    .cexport-rail-popover-title-wrap {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .cexport-rail-popover-title {
+      min-width: 0;
+      color: var(--cexport-fg);
+      font-size: 12px;
+      font-weight: 700;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .cexport-rail-popover-subtitle {
+      margin-top: 2px;
+      color: var(--cexport-muted);
+      font-size: 11px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .cexport-rail-popover-actions {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      flex: 0 0 auto;
+    }
+
+    .cexport-rail-popover-action {
+      appearance: none;
+      border: 1px solid var(--cexport-border);
+      border-radius: 8px;
+      padding: 4px 7px;
+      background: rgba(255,255,255,0.06);
+      color: var(--cexport-fg);
+      cursor: pointer;
+      font: 11px/1.2 var(--cexport-font);
+      white-space: nowrap;
+    }
+
+    .cexport-rail-popover-action:hover {
+      background: rgba(122,162,255,0.16);
+      border-color: color-mix(in srgb, var(--cexport-accent) 55%, var(--cexport-border));
+    }
+
+    .cexport-rail-popover-list {
+      display: grid;
+      gap: 4px;
+    }
+
+    .cexport-rail-popover-item {
+      appearance: none;
+      border: 0;
+      width: 100%;
+      padding: 7px 8px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--cexport-fg);
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 8px;
+      font: inherit;
+      text-align: left;
+    }
+
+    .cexport-rail-popover-item:hover,
+    .cexport-rail-popover-item.active {
+      background: rgba(122,162,255,0.16);
+    }
+
+    .cexport-rail-popover-index {
+      color: var(--cexport-accent);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .cexport-rail-popover-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cexport-rail-popover-empty {
+      padding: 8px;
+      color: var(--cexport-muted);
     }
 
     .cexport-rail-empty {
@@ -1898,10 +2007,15 @@
   const ctx = { adapter: null, messages: [], activeIndex: -1, lastUrl: location.href, lastTitle: document.title, lastDirectorySignature: '' };
   /** @type {number|undefined} */
   let autoCollapseTimer;
+  /** @type {number|undefined} */
+  let railPopoverCloseTimer;
+  let railPopoverSignature = '';
 
   function collapsePanel() {
     state.collapsed = true;
     root.classList.add('cexport-collapsed');
+    railPopover.classList.remove('cexport-force-hidden');
+    ensureRailPopoverMenu();
     updateToggleButton();
     saveState(state);
   }
@@ -1909,6 +2023,7 @@
   function expandPanel() {
     state.collapsed = false;
     root.classList.remove('cexport-collapsed');
+    closeRailPopover();
     updateToggleButton();
     saveState(state);
   }
@@ -1977,6 +2092,10 @@
       el.classList.toggle('active', el.getAttribute('data-id') === activeId);
     });
     railListEl.querySelectorAll('.cexport-rail-item').forEach((el) => {
+      const groupIds = el.getAttribute('data-group-ids') || '';
+      el.classList.toggle('active', el.getAttribute('data-id') === activeId || groupIds.includes(`|${activeId}|`));
+    });
+    railPopover.querySelectorAll('.cexport-rail-popover-item').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-id') === activeId);
     });
   }
@@ -2001,6 +2120,7 @@
     const anchorY = Math.min(Math.max(window.innerHeight * 0.28, 120), 260);
     let best = null;
     for (const { message } of questions) {
+      if (!message.el.isConnected) continue;
       const rect = message.el.getBoundingClientRect();
       if (rect.bottom < 0) continue;
       if (rect.top <= anchorY) {
@@ -2022,6 +2142,117 @@
       activeScrollFrame = undefined;
       updateActiveFromViewport();
     });
+  }
+
+  /** @param {Message} message */
+  function jumpToQuestion(message) {
+    setActiveMessage(message);
+    suppressScrollActiveSync();
+    if (ctx.adapter) ctx.adapter.scrollToMessage(message.el);
+    setStatus(`已定位到第 ${message.index + 1} 条消息。`);
+  }
+
+  /** @param {boolean} [forceHidden] */
+  function closeRailPopover(forceHidden) {
+    railPopover.classList.remove('open');
+    if (forceHidden) railPopover.classList.add('cexport-force-hidden');
+  }
+
+  function scheduleCloseRailPopover() {
+    window.clearTimeout(railPopoverCloseTimer);
+    railPopoverCloseTimer = window.setTimeout(closeRailPopover, 420);
+  }
+
+  function renderRailPopoverMenu() {
+    railPopover.replaceChildren();
+    const head = makeEl('div', { className: 'cexport-rail-popover-head' });
+    const titleWrap = makeEl('div', { className: 'cexport-rail-popover-title-wrap' });
+    const titleText = (ctx.adapter && ctx.adapter.getTitle()) || '导出对话';
+    titleWrap.append(
+      makeEl('div', { className: 'cexport-rail-popover-title', text: titleText }),
+      makeEl('div', { className: 'cexport-rail-popover-subtitle', text: '选择问题快速跳转' }),
+    );
+    const actions = makeEl('div', { className: 'cexport-rail-popover-actions' });
+    const exportBtn = /** @type {HTMLButtonElement} */ (makeEl('button', {
+      className: 'cexport-rail-popover-action',
+      text: '导出',
+      title: '展开完整侧边面板',
+      ariaLabel: '展开完整面板',
+      type: 'button',
+    }));
+    exportBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeRailPopover(true);
+      expandPanel();
+    });
+    actions.append(exportBtn);
+    head.append(titleWrap, actions);
+
+    const list = makeEl('div', { className: 'cexport-rail-popover-list' });
+    const entries = getDirectoryEntries();
+
+    if (!entries.length) {
+      list.appendChild(makeEl('div', { className: 'cexport-rail-popover-empty', text: '暂无问题目录' }));
+    }
+
+    for (const { message, questionIndex } of entries) {
+      const btn = /** @type {HTMLButtonElement} */ (makeEl('button', {
+        className: 'cexport-rail-popover-item' + (ctx.activeIndex === message.index ? ' active' : ''),
+        type: 'button',
+        title: `Q${questionIndex + 1}. ${messageSnippet(message)}`,
+        ariaLabel: `跳转到第 ${questionIndex + 1} 个问题`,
+        attrs: { 'data-id': message.id },
+      }));
+      btn.append(
+        makeEl('span', { className: 'cexport-rail-popover-index', text: `Q${questionIndex + 1}` }),
+        makeEl('span', { className: 'cexport-rail-popover-label', text: messageSnippet(message) }),
+      );
+      btn.addEventListener('click', () => {
+        jumpToQuestion(message);
+        closeRailPopover();
+      });
+      list.appendChild(btn);
+    }
+
+    railPopover.append(head, list);
+    railPopoverSignature = getDirectorySignature(ctx.messages);
+    syncActiveMarkers();
+  }
+
+  function ensureRailPopoverMenu() {
+    const signature = getDirectorySignature(ctx.messages);
+    if (signature !== railPopoverSignature || !railPopover.childElementCount) renderRailPopoverMenu();
+    else syncActiveMarkers();
+  }
+
+  function openRailPopover() {
+    if (!root.classList.contains('cexport-collapsed')) return;
+    window.clearTimeout(railPopoverCloseTimer);
+    ensureRailPopoverMenu();
+    railPopover.classList.remove('cexport-force-hidden');
+    railPopover.classList.add('open');
+  }
+
+  /** @param {{message: Message, questionIndex: number}[]} entries */
+  function getRailMarkerGroups(entries) {
+    const maxMarkers = 24;
+    const slotCount = Math.min(maxMarkers, entries.length);
+    const groups = new Map();
+
+    entries.forEach((entry, index) => {
+      const progress = entries.length === 1 ? 0.5 : index / (entries.length - 1);
+      const slot = Math.max(0, Math.min(slotCount - 1, Math.round(progress * (slotCount - 1))));
+      if (!groups.has(slot)) groups.set(slot, []);
+      groups.get(slot).push(entry);
+    });
+
+    return Array.from(groups.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([slot, group]) => ({
+        slot,
+        topPercent: slotCount === 1 ? 50 : 8 + (slot / (slotCount - 1)) * 84,
+        entries: group,
+      }));
   }
 
   function renderList() {
@@ -2077,10 +2308,7 @@
       item.appendChild(chk);
 
       item.addEventListener('click', () => {
-        setActiveMessage(m);
-        suppressScrollActiveSync();
-        if (ctx.adapter) ctx.adapter.scrollToMessage(m.el);
-        setStatus(`已定位到第 ${m.index + 1} 条消息。`);
+        jumpToQuestion(m);
       });
 
       wrap.appendChild(item);
@@ -2103,37 +2331,30 @@
       return;
     }
 
-    for (const { message: m, questionIndex } of questions) {
+    for (const marker of getRailMarkerGroups(questions)) {
+      const activeEntry = marker.entries.find(({ message }) => message.index === ctx.activeIndex);
+      const { message: m, questionIndex } = activeEntry || marker.entries[0];
+      const merged = marker.entries.length > 1;
       const btn = document.createElement('button');
-      btn.className = 'cexport-rail-item' + (ctx.activeIndex === m.index ? ' active' : '');
+      btn.className = 'cexport-rail-item' + (merged ? ' merged' : '') + (marker.entries.some(({ message }) => message.index === ctx.activeIndex) ? ' active' : '');
       btn.type = 'button';
       btn.setAttribute('data-id', m.id);
-      const preview = `Q${questionIndex + 1}. ${messageSnippet(m)}`;
+      btn.setAttribute('data-group-ids', `|${marker.entries.map(({ message }) => message.id).join('|')}|`);
+      btn.style.top = `${marker.topPercent}%`;
+      const preview = merged
+        ? `Q${marker.entries[0].questionIndex + 1}-Q${marker.entries[marker.entries.length - 1].questionIndex + 1} · ${marker.entries.length} 个问题`
+        : `Q${questionIndex + 1}. ${messageSnippet(m)}`;
       btn.dataset.preview = preview;
-      btn.setAttribute('aria-label', `跳转到第 ${questionIndex + 1} 个问题`);
-      btn.addEventListener('mouseenter', () => {
-        const rect = btn.getBoundingClientRect();
-        railPopover.textContent = preview;
-        railPopover.classList.add('open');
-        const popoverWidth = Math.min(320, Math.max(180, preview.length * 7 + 28));
-        railPopover.style.width = `${popoverWidth}px`;
-        railPopover.style.left = `${Math.max(12, rect.left - popoverWidth - 12)}px`;
-        railPopover.style.top = `${Math.max(12, Math.min(window.innerHeight - 48, rect.top + rect.height / 2 - 18))}px`;
-      });
-      btn.addEventListener('mouseleave', () => {
-        railPopover.classList.remove('open');
-      });
+      btn.setAttribute('aria-label', merged ? `跳转到这一组中的第 ${questionIndex + 1} 个问题` : `跳转到第 ${questionIndex + 1} 个问题`);
+      btn.title = preview;
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        railPopover.classList.remove('open');
-        setActiveMessage(m);
-        suppressScrollActiveSync();
-        if (ctx.adapter) ctx.adapter.scrollToMessage(m.el);
-        setStatus(`已定位到第 ${m.index + 1} 条消息。`);
+        jumpToQuestion(m);
       });
 
       railListEl.appendChild(btn);
     }
+    ensureRailPopoverMenu();
   }
 
   /** @param {{silent?: boolean, reason?: string}} opts */
@@ -2217,6 +2438,7 @@
     return mutations.some((m) => {
       const target = /** @type {Element|null} */ (m.target && m.target.nodeType === Node.ELEMENT_NODE ? m.target : m.target.parentElement);
       if (target && target.closest && target.closest('#cexport-root')) return false;
+      if (target && target.closest && target.closest('#cexport-rail-popover')) return false;
       if (target && target.closest && target.closest('#cexport-preview')) return false;
       return true;
     });
@@ -2542,21 +2764,40 @@
     expandPanel();
   });
 
-  railListEl.addEventListener('wheel', (ev) => {
-    ev.stopPropagation();
-    railListEl.scrollTop += ev.deltaY;
-  }, { passive: false });
-
   root.addEventListener('mouseenter', () => {
     window.clearTimeout(autoCollapseTimer);
+    window.clearTimeout(railPopoverCloseTimer);
+    openRailPopover();
+  });
+
+  root.addEventListener('mousemove', () => {
+    if (root.classList.contains('cexport-collapsed')) openRailPopover();
   });
 
   root.addEventListener('mouseleave', () => {
     window.clearTimeout(autoCollapseTimer);
-    if (state.pinned || state.collapsed) return;
+    if (state.collapsed) {
+      scheduleCloseRailPopover();
+      return;
+    }
+    closeRailPopover();
+    if (state.pinned) return;
     autoCollapseTimer = window.setTimeout(() => {
       if (!state.pinned && !state.collapsed) collapsePanel();
     }, 700);
+  });
+
+  railPopover.addEventListener('mouseenter', () => {
+    window.clearTimeout(railPopoverCloseTimer);
+    openRailPopover();
+  });
+
+  railPopover.addEventListener('mousemove', () => {
+    window.clearTimeout(railPopoverCloseTimer);
+  });
+
+  railPopover.addEventListener('mouseleave', () => {
+    scheduleCloseRailPopover();
   });
 
   $('#cexport-refresh').addEventListener('click', () => refresh({ silent: false, reason: 'manual' }));
