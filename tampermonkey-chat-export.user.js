@@ -1970,6 +1970,60 @@
     return picked.sort((a, b) => a.index - b.index);
   }
 
+  function syncActiveMarkers() {
+    const active = ctx.messages.find((m) => m.index === ctx.activeIndex);
+    const activeId = active ? active.id : '';
+    root.querySelectorAll('.cexport-item').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-id') === activeId);
+    });
+    railListEl.querySelectorAll('.cexport-rail-item').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-id') === activeId);
+    });
+  }
+
+  /** @param {Message} message */
+  function setActiveMessage(message) {
+    if (ctx.activeIndex === message.index) return;
+    ctx.activeIndex = message.index;
+    syncActiveMarkers();
+  }
+
+  let suppressScrollActiveUntil = 0;
+  function suppressScrollActiveSync() {
+    suppressScrollActiveUntil = Date.now() + 1200;
+  }
+
+  function updateActiveFromViewport() {
+    if (Date.now() < suppressScrollActiveUntil) return;
+    const questions = getDirectoryEntries();
+    if (!questions.length) return;
+
+    const anchorY = Math.min(Math.max(window.innerHeight * 0.28, 120), 260);
+    let best = null;
+    for (const { message } of questions) {
+      const rect = message.el.getBoundingClientRect();
+      if (rect.bottom < 0) continue;
+      if (rect.top <= anchorY) {
+        best = message;
+        continue;
+      }
+      if (!best) best = message;
+      break;
+    }
+    if (!best) best = questions[questions.length - 1].message;
+    if (best) setActiveMessage(best);
+  }
+
+  /** @type {number|undefined} */
+  let activeScrollFrame;
+  function scheduleActiveFromViewport() {
+    if (activeScrollFrame) return;
+    activeScrollFrame = window.requestAnimationFrame(() => {
+      activeScrollFrame = undefined;
+      updateActiveFromViewport();
+    });
+  }
+
   function renderList() {
     const filter = (filterEl.value || '').toLowerCase();
     listEl.replaceChildren();
@@ -2023,10 +2077,10 @@
       item.appendChild(chk);
 
       item.addEventListener('click', () => {
-        ctx.activeIndex = m.index;
+        setActiveMessage(m);
+        suppressScrollActiveSync();
         if (ctx.adapter) ctx.adapter.scrollToMessage(m.el);
         setStatus(`已定位到第 ${m.index + 1} 条消息。`);
-        renderList();
       });
 
       wrap.appendChild(item);
@@ -2053,6 +2107,7 @@
       const btn = document.createElement('button');
       btn.className = 'cexport-rail-item' + (ctx.activeIndex === m.index ? ' active' : '');
       btn.type = 'button';
+      btn.setAttribute('data-id', m.id);
       const preview = `Q${questionIndex + 1}. ${messageSnippet(m)}`;
       btn.dataset.preview = preview;
       btn.setAttribute('aria-label', `跳转到第 ${questionIndex + 1} 个问题`);
@@ -2071,10 +2126,10 @@
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         railPopover.classList.remove('open');
-        ctx.activeIndex = m.index;
+        setActiveMessage(m);
+        suppressScrollActiveSync();
         if (ctx.adapter) ctx.adapter.scrollToMessage(m.el);
         setStatus(`已定位到第 ${m.index + 1} 条消息。`);
-        renderList();
       });
 
       railListEl.appendChild(btn);
@@ -2106,6 +2161,7 @@
 
       syncHeader();
       renderList();
+      updateActiveFromViewport();
       if (opts.silent) {
         setStatus(`目录已自动更新（${ctx.messages.length} 条）。`);
       } else {
@@ -2148,6 +2204,7 @@
         ctx.lastTitle = document.title;
         syncHeader();
         renderList();
+        updateActiveFromViewport();
         setStatus(`目录已自动更新（${ctx.messages.filter((m) => m.role === 'user').length} 轮对话）。`);
       }
     } catch {
@@ -2173,6 +2230,7 @@
     const observer = new MutationObserver((mutations) => {
       if (!hasExternalConversationMutation(mutations)) return;
       scheduleRefresh('mutation', 1200);
+      scheduleActiveFromViewport();
     });
     observer.observe(document.body, {
       childList: true,
@@ -2194,6 +2252,8 @@
       return result;
     };
     window.addEventListener('popstate', onRouteChange);
+    window.addEventListener('scroll', scheduleActiveFromViewport, { passive: true });
+    document.addEventListener('scroll', scheduleActiveFromViewport, { passive: true, capture: true });
 
     document.addEventListener('click', (ev) => {
       const target = ev.target instanceof Element ? ev.target : null;
