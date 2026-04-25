@@ -403,6 +403,8 @@
 
   /** @type {Adapter[]} */
   const adapters = [];
+  /** @type {WeakMap<Element, {sourceText: string, markdown: string}>} */
+  const markdownCache = new WeakMap();
 
   /** @returns {Adapter|null} */
   function pickAdapter() {
@@ -410,17 +412,46 @@
     return null;
   }
 
-  /** @param {Adapter} adapter */
-  function extractMessages(adapter) {
+  /**
+   * @param {Element} contentRoot
+   */
+  function getContentSignature(contentRoot) {
+    const parts = [contentRoot.textContent || ''];
+    contentRoot.querySelectorAll('a[href], code, pre, h1, h2, h3, h4, h5, h6').forEach((el) => {
+      parts.push(el.tagName, el.getAttribute('href') || '', el.getAttribute('class') || '', el.getAttribute('data-language') || '');
+    });
+    return parts.join('\u0001');
+  }
+
+  /**
+   * @param {Element} messageEl
+   * @param {Element} contentRoot
+   * @param {boolean} force
+   */
+  function getMessageMarkdown(messageEl, contentRoot, force = false) {
+    const sourceText = getContentSignature(contentRoot);
+    const cached = markdownCache.get(messageEl);
+    if (!force && cached && cached.sourceText === sourceText) return cached.markdown;
+
+    const markdown = domToMarkdown(contentRoot);
+    markdownCache.set(messageEl, { sourceText, markdown });
+    return markdown;
+  }
+
+  /**
+   * @param {Adapter} adapter
+   * @param {{forceMarkdown?: boolean}} opts
+   */
+  function extractMessages(adapter, opts = {}) {
     const els = adapter.getMessageElements();
     /** @type {Message[]} */
     const msgs = [];
     els.forEach((el, index) => {
       const role = adapter.getRole(el);
       const contentRoot = adapter.getContentRoot(el);
-      const text = domToMarkdown(contentRoot);
       const id = el.getAttribute('data-cexport-id') || `m_${index}_${Math.random().toString(16).slice(2)}`;
       el.setAttribute('data-cexport-id', id);
+      const text = getMessageMarkdown(el, contentRoot, !!opts.forceMarkdown);
       msgs.push({ id, role, text, el, index });
     });
 
@@ -532,6 +563,8 @@
         const found = Array.from(document.querySelectorAll(sel)).filter((el) => (el.textContent || '').trim().length > 0);
         if (found.length >= 2) return found;
       }
+
+      if (!/^\/(?:c|share)\//.test(location.pathname)) return [];
 
       // 3) 最后兜底：main 内较大的 text 块（可能会包含噪音）
       const main = document.querySelector('main');
@@ -1561,6 +1594,63 @@
   const state = loadState();
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  const THEME_CLASSES = ['cexport-theme-chatgpt', 'cexport-theme-gemini', 'cexport-theme-qianwen'];
+  const MODE_CLASSES = ['cexport-light', 'cexport-dark'];
+
+  function detectColorMode() {
+    const attrText = [
+      document.documentElement.getAttribute('data-theme'),
+      document.documentElement.getAttribute('theme'),
+      document.documentElement.className,
+      document.body && document.body.getAttribute('data-theme'),
+      document.body && document.body.className,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (/\b(dark|night|黑|暗)\b/.test(attrText)) return 'dark';
+    if (/\b(light|day|白|浅)\b/.test(attrText)) return 'light';
+
+    const storageKeys = [
+      'theme',
+      'color-theme',
+      'colorMode',
+      'color-mode',
+      'qwen-theme',
+      'tongyi-theme-preference',
+      'gemini-theme',
+      'chakra-ui-color-mode',
+    ];
+    for (const key of storageKeys) {
+      try {
+        const value = (localStorage.getItem(key) || '').toLowerCase();
+        if (value === 'dark' || value === 'night') return 'dark';
+        if (value === 'light' || value === 'day') return 'light';
+      } catch {
+        // ignore inaccessible storage
+      }
+    }
+
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  /** @param {Adapter|null} adapter */
+  function getThemeClass(adapter) {
+    const theme = adapter ? `cexport-theme-${adapter.id}` : '';
+    return THEME_CLASSES.includes(theme) ? theme : '';
+  }
+
+  /**
+   * @param {HTMLElement} surface
+   * @param {Adapter|null} adapter
+   */
+  function setSurfaceTheme(surface, adapter) {
+    surface.classList.remove(...THEME_CLASSES, ...MODE_CLASSES);
+    const theme = getThemeClass(adapter);
+    if (theme) surface.classList.add(theme);
+    surface.classList.add(`cexport-${detectColorMode()}`);
+  }
 
   /** @param {string} d */
   function svgPath(d) {
@@ -1656,9 +1746,11 @@
     return btn;
   }
 
+  const initialAdapter = pickAdapter();
   const root = document.createElement('div');
   root.id = 'cexport-root';
   if (state.collapsed) root.classList.add('cexport-collapsed');
+  setSurfaceTheme(root, initialAdapter);
 
   const rail = makeEl('div', { id: 'cexport-rail', ariaLabel: '折叠目录' });
   rail.appendChild(makeIconButton('cexport-rail-head', '点击展开完整面板', '点击展开完整面板', 'expand', '展开'));
@@ -1707,10 +1799,12 @@
 
   const railPopover = document.createElement('div');
   railPopover.id = 'cexport-rail-popover';
+  setSurfaceTheme(railPopover, initialAdapter);
   document.documentElement.appendChild(railPopover);
 
   const previewRoot = document.createElement('div');
   previewRoot.id = 'cexport-preview';
+  setSurfaceTheme(previewRoot, initialAdapter);
   const previewBackdrop = makeEl('div', { id: 'cexport-preview-backdrop' });
   const previewPanel = makeEl('div', { id: 'cexport-preview-panel', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cexport-preview-heading' } });
   const previewHeader = makeEl('div', { id: 'cexport-preview-header' });
@@ -1752,65 +1846,11 @@
 
   filterEl.value = state.filter;
 
-  function detectColorMode() {
-    const attrText = [
-      document.documentElement.getAttribute('data-theme'),
-      document.documentElement.getAttribute('theme'),
-      document.documentElement.className,
-      document.body && document.body.getAttribute('data-theme'),
-      document.body && document.body.className,
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-
-    if (/\b(dark|night|黑|暗)\b/.test(attrText)) return 'dark';
-    if (/\b(light|day|白|浅)\b/.test(attrText)) return 'light';
-
-    const storageKeys = [
-      'theme',
-      'color-theme',
-      'colorMode',
-      'color-mode',
-      'qwen-theme',
-      'tongyi-theme-preference',
-      'gemini-theme',
-      'chakra-ui-color-mode',
-    ];
-    for (const key of storageKeys) {
-      try {
-        const value = (localStorage.getItem(key) || '').toLowerCase();
-        if (value === 'dark' || value === 'night') return 'dark';
-        if (value === 'light' || value === 'day') return 'light';
-      } catch {
-        // ignore inaccessible storage
-      }
-    }
-
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-
   /** @param {Adapter|null} adapter */
   function applySiteTheme(adapter) {
-    const themeClasses = ['cexport-theme-chatgpt', 'cexport-theme-gemini', 'cexport-theme-qianwen'];
-    const modeClasses = ['cexport-light', 'cexport-dark'];
-    root.classList.remove(...themeClasses);
-    previewRoot.classList.remove(...themeClasses);
-    railPopover.classList.remove(...themeClasses);
-    root.classList.remove(...modeClasses);
-    previewRoot.classList.remove(...modeClasses);
-    railPopover.classList.remove(...modeClasses);
-
-    const theme = adapter && themeClasses.includes(`cexport-theme-${adapter.id}`) ? `cexport-theme-${adapter.id}` : '';
-    const mode = `cexport-${detectColorMode()}`;
-    if (theme) {
-      root.classList.add(theme);
-      previewRoot.classList.add(theme);
-      railPopover.classList.add(theme);
-    }
-    root.classList.add(mode);
-    previewRoot.classList.add(mode);
-    railPopover.classList.add(mode);
+    setSurfaceTheme(root, adapter);
+    setSurfaceTheme(previewRoot, adapter);
+    setSurfaceTheme(railPopover, adapter);
   }
 
   function updateToggleButton() {
@@ -2061,11 +2101,13 @@
       ctx.lastTitle = document.title;
       const beforeDirectorySignature = ctx.lastDirectorySignature;
       ctx.lastDirectorySignature = getDirectorySignature(ctx.messages);
+      const changed = beforeCount !== ctx.messages.length || beforeDirectorySignature !== ctx.lastDirectorySignature || opts.reason === 'route';
+      if (opts.silent && !changed) return;
+
       syncHeader();
       renderList();
       if (opts.silent) {
-        const changed = beforeCount !== ctx.messages.length || beforeDirectorySignature !== ctx.lastDirectorySignature || opts.reason === 'route';
-        if (changed) setStatus(`目录已自动更新（${ctx.messages.length} 条）。`);
+        setStatus(`目录已自动更新（${ctx.messages.length} 条）。`);
       } else {
         setStatus('就绪。若导出不完整，请先滚动加载更多历史消息后再刷新。');
       }
@@ -2302,7 +2344,7 @@
     ctx.adapter = pickAdapter();
     applySiteTheme(ctx.adapter);
     if (!ctx.adapter) return false;
-    ctx.messages = extractMessages(ctx.adapter);
+    ctx.messages = extractMessages(ctx.adapter, { forceMarkdown: true });
     ctx.lastUrl = location.href;
     ctx.lastTitle = document.title;
     ctx.lastDirectorySignature = getDirectorySignature(ctx.messages);
