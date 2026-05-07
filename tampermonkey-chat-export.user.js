@@ -215,7 +215,34 @@
 
       if (tag === 'pre') {
         const codeEl = el.querySelector('code') || el;
-        const code = (codeEl.textContent || '').replace(/\n+$/, '');
+
+        /** @param {Node} n */
+        const readCodeText = (n) => {
+          if (n.nodeType === Node.TEXT_NODE) return n.textContent || '';
+          if (n.nodeType !== Node.ELEMENT_NODE) return '';
+          const e = /** @type {Element} */ (n);
+          const t = e.tagName.toLowerCase();
+          if (t === 'br') return '\n';
+
+          // 千问/React Syntax Highlighter 等：行号是单独的 span，需从代码内容中剔除
+          if (e instanceof Element) {
+            const cls = (e.getAttribute('class') || '').toLowerCase();
+            if (cls.includes('linenumber') || cls.includes('line-number')) {
+              const text = (e.textContent || '').trim();
+              if (/^\d+$/.test(text)) return '';
+            }
+            // 常见的行号 class
+            if (cls.includes('react-syntax-highlighter-line-number')) return '';
+          }
+
+          let s = '';
+          e.childNodes.forEach((c) => { s += readCodeText(c); });
+          return s;
+        };
+
+        // ChatGPT 的 code viewer 里换行常用 <br>，textContent 不一定保留换行
+        const code = readCodeText(codeEl).replace(/\n+$/, '');
+
         const langFromClass = (() => {
           if (!(codeEl instanceof Element)) return '';
           const cls = codeEl.getAttribute('class') || '';
@@ -223,7 +250,89 @@
           return (m && m[1]) ? m[1] : '';
         })();
         const langFromAttr = codeEl instanceof Element ? (codeEl.getAttribute('data-language') || '') : '';
-        const lang = (langFromAttr || langFromClass || '').trim();
+
+        // ChatGPT 新版代码块：语言通常在 header 的可见文字里（如 “TypeScript”）
+        const langFromHeader = (() => {
+          const map = {
+            c: 'c',
+            'c++': 'cpp',
+            cpp: 'cpp',
+            cxx: 'cpp',
+            cc: 'cpp',
+            h: 'c',
+            hpp: 'cpp',
+            ts: 'typescript',
+            typescript: 'typescript',
+            js: 'javascript',
+            javascript: 'javascript',
+            json: 'json',
+            jsx: 'jsx',
+            tsx: 'tsx',
+            python: 'python',
+            py: 'python',
+            bash: 'bash',
+            shell: 'bash',
+            sh: 'bash',
+            zsh: 'bash',
+            powershell: 'powershell',
+            ps1: 'powershell',
+            html: 'html',
+            css: 'css',
+            sql: 'sql',
+            yaml: 'yaml',
+            yml: 'yaml',
+            markdown: 'markdown',
+            md: 'markdown',
+          };
+
+          /** @param {string} s */
+          const pick = (s) => {
+            const key = (s || '').trim().toLowerCase();
+            return map[key] || '';
+          };
+
+          // 先看属性（有些 viewer 会挂在 pre 上）
+          if (el instanceof Element) {
+            const a = pick(el.getAttribute('data-language') || '');
+            if (a) return a;
+          }
+
+          // 关键：不要用 pre 的整体 textContent（会混入代码文本），改为在 codeEl 之外找短标签
+          if (!(el instanceof Element) || !(codeEl instanceof Element) || !el.querySelectorAll) return '';
+          const candidates = Array.from(el.querySelectorAll('div, span, button'))
+            .filter((n) => n instanceof Element && !codeEl.contains(n))
+            .map((n) => normalizeText((/** @type {Element} */(n)).textContent || ''))
+            .filter((t) => t && t.length <= 24);
+
+          for (const t of candidates) {
+            const got = pick(t);
+            if (got) return got;
+          }
+
+          // 千问等站点：语言标签在 pre 外层容器 header（如 .qw-md-code）里
+          if (el instanceof Element && el.parentElement) {
+            /** @type {Element|null} */
+            let box = el.parentElement;
+            for (let i = 0; i < 5 && box; i += 1) {
+              const scope = box;
+              const outer = Array.from(scope.querySelectorAll('span, div, button'))
+                .filter((n) => n instanceof Element && !el.contains(n) && !n.contains(el))
+                .map((n) => normalizeText((/** @type {Element} */(n)).textContent || ''))
+                .filter((t) => t && t.length <= 24);
+
+              for (const t of outer) {
+                const got = pick(t);
+                if (got) return got;
+              }
+
+              box = box.parentElement;
+            }
+          }
+
+          return '';
+        })();
+
+        const lang = (langFromAttr || langFromClass || langFromHeader || '').trim();
         push('\n\n```' + (lang ? lang : '') + '\n' + code + '\n```\n\n');
         return;
       }
@@ -267,6 +376,38 @@
           .map((l) => (l ? `> ${l}` : '>'))
           .join('\n');
         push('\n\n' + quoted + '\n\n');
+        return;
+      }
+
+      if (tag === 'table') {
+        const rows = Array.from(el.querySelectorAll(':scope tr'))
+          .map((tr) => Array.from(tr.children)
+            .filter((c) => {
+              const t = c.tagName && c.tagName.toLowerCase();
+              return t === 'td' || t === 'th';
+            })
+            .map((cell) => {
+              const raw = normalizeText((cell.textContent || '').replace(/\u00a0/g, ' '));
+              return raw.replace(/\|/g, '\\|').replace(/\n/g, '<br>');
+            }))
+          .filter((r) => r.length);
+
+        if (!rows.length) return;
+
+        const maxCols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+        const padRow = (r) => {
+          const next = r.slice(0, maxCols);
+          while (next.length < maxCols) next.push('');
+          return next;
+        };
+
+        const header = padRow(rows[0]);
+        const bodyRows = rows.slice(1).map(padRow);
+        const sep = new Array(maxCols).fill('---');
+        const toLine = (r) => `| ${r.map((v) => (v || '').trim()).join(' | ')} |`;
+        const tableLines = [toLine(header), toLine(sep), ...bodyRows.map(toLine)];
+
+        push('\n\n' + tableLines.join('\n') + '\n\n');
         return;
       }
 
@@ -1506,6 +1647,10 @@
       margin-bottom: 8px;
       padding: 2px 2px 8px;
       border-bottom: 1px solid var(--cexport-border);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--cexport-bg);
     }
 
     .cexport-rail-popover-title-wrap {
